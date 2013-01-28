@@ -107,20 +107,18 @@ class MyThread(Thread):
         conn = EC2Connection(credentials.EC2_ACCESS_ID, credentials.EC2_SECRET_KEY)
         node_name = 'worker_' + self.name
         self.start_time = time.time()
-        n = create_node(conn, node_name)
-        conn.ex_create_tags(n, {'job' : self.jobname})
-        ip = get_node(conn, n.uuid).private_ip[0]
-        # print('ip is ' + ip + " for thread " + self.name)
+        instance = create_node(conn, node_name)
+        instance.add_tag('job', JOB)
+
+        print('instance domain name is ' + instance.public_dns_name)
         time.sleep(30)
-
-        print(self.name + ':' + str(run_command_on_ip('uname -a', ip)))
-        print(self.name + ':' + str(copy_file_to_ip(self.input_file_name, ip, 'input.dna')))
-        print(self.name + ':' + str(run_command_on_ip('cp /home/ubuntu/iprscan/interproscan-5-RC1/interproscan.properties.' + str(self.processors) +  ' /home/ubuntu/iprscan/interproscan-5-RC1/interproscan.properties', ip)))
-        print(self.name + ':' + str(run_command_on_ip('/home/ubuntu/iprscan/interproscan-5-RC1/interproscan.sh -appl ProDom-2006.1,PfamA-26.0,TIGRFAM-10.1,SMART-6.2,Gene3d-3.3.0,Coils-2.2,Phobius-1.01 -i /home/ubuntu/input.dna -t n', ip)))
-        print(self.name + ':' + str(copy_file_from_ip('input.dna.gff3', ip, self.input_file_name + '.out')))
+        print(self.name + ':' + str(run_command_on_ip('uname -a', instance.public_dns_name)))
+        print(self.name + ':' + str(copy_file_to_ip(self.input_file_name, instance.public_dns_name, 'input.dna')))
+        print(self.name + ':' + str(run_command_on_ip('cp /home/ubuntu/iprscan/interproscan-5-RC1/interproscan.properties.' + str(self.processors) +  ' /home/ubuntu/iprscan/interproscan-5-RC1/interproscan.properties', instance.public_dns_name)))
+        print(self.name + ':' + str(run_command_on_ip('/home/ubuntu/iprscan/interproscan-5-RC1/interproscan.sh -appl ProDom-2006.1,PfamA-26.0,TIGRFAM-10.1,SMART-6.2,Gene3d-3.3.0,Coils-2.2,Phobius-1.01 -i /home/ubuntu/input.dna -t n', instance.public_dns_name)))
+        print(self.name + ':' + str(copy_file_from_ip('input.dna.gff3', instance.public_dns_name, self.input_file_name + '.out')))
         print(self.name + ' : destroying node')
-        get_node(conn, n.uuid).destroy()
-
+        instance.terminate()
         seconds = time.time() - self.start_time
         print(Fore.MAGENTA + self.name + ' : completed in ' + str(int(seconds)) + Fore.RESET)
 
@@ -162,8 +160,8 @@ def split_fasta(filename, number):
 
 SIZE = 'c1.xlarge'
 SECURITY_GROUP = 'quick-start-1'
-job = 'lab_meeting_demo'
-number = 1
+JOB = 'lab_meeting_demo'
+number = 4
 processors = 8
 input_file = 'input.fasta'
 
@@ -175,17 +173,17 @@ print('destroying old nodes...')
 destroy_worker_nodes()
 print('done destroying old nodes')
 
-#filenames = split_fasta(input_file, number)
-#
-#for i in range(number):
-#    print('starting thread ' + str(i))
-#    time.sleep(2)
-#    my_thread = MyThread()
-#    my_thread.name = i
-#    my_thread.input_file_name = filenames[i]
-#    my_thread.jobname = job
-#    my_thread.processors = processors
-#    my_thread.start()
+filenames = split_fasta(input_file, number)
+
+for i in range(number):
+    print('starting thread ' + str(i))
+    time.sleep(2)
+    my_thread = MyThread()
+    my_thread.name = i
+    my_thread.input_file_name = filenames[i]
+    my_thread.jobname = JOB
+    my_thread.processors = processors
+    my_thread.start()
 
 # # print_status()
 # destroy_worker_nodes()
