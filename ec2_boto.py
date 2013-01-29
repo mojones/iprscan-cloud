@@ -51,12 +51,12 @@ def get_node(conn, id):
 
 def create_node(conn, my_size):
     print('creating node...')
-    reservation = conn.run_instances(credentials.WORKER_AMI,key_name='first_instance',instance_type=SIZE,security_groups=[SECURITY_GROUP])
+    reservation = conn.run_instances(credentials.WORKER_AMI,key_name=KEY_NAME,instance_type=SIZE,security_groups=[SECURITY_GROUP])
     instance = reservation.instances[0]
     while instance.state != 'running':
         time.sleep(1)
         instance.update()
-        print("instance state : " + instance.state)
+    #    print("instance state : " + instance.state)
     return instance
 
 def run_command_on_ip(command, ip):
@@ -64,7 +64,7 @@ def run_command_on_ip(command, ip):
     'ssh',
     '-o', 'UserKnownHostsFile=/dev/null',
     '-o','StrictHostKeyChecking=no',
-    '-i', 'first_instance.pem',
+    '-i', KEY_FILE_PATH,
     'ubuntu@' + ip,
     command
     ]
@@ -78,7 +78,7 @@ def copy_file_to_ip(path, ip, destination):
     'scp',
     '-o', 'UserKnownHostsFile=/dev/null',
     '-o','StrictHostKeyChecking=no',
-    '-i', 'first_instance.pem',
+    '-i',KEY_FILE_PATH,
     path,
     'ubuntu@' + ip + ':~/' + destination,
     ]
@@ -92,7 +92,7 @@ def copy_file_from_ip(path, ip, destination):
     'scp',
     '-o', 'UserKnownHostsFile=/dev/null',
     '-o','StrictHostKeyChecking=no',
-    '-i', 'first_instance.pem',
+    '-i',KEY_FILE_PATH,
     'ubuntu@' + ip + ':~/' + path,
     destination,
     ]
@@ -164,8 +164,8 @@ JOB = 'lab_meeting_demo'
 number = 4
 processors = 8
 input_file = 'input.fasta'
-
-
+KEY_FILE_PATH = 'first_instance.pem'
+KEY_NAME = 'first_instance'
 
 
 
