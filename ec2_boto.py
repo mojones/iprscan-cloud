@@ -2,7 +2,7 @@ from boto.ec2.connection import EC2Connection
 
 from threading import Thread
 
-import time, subprocess
+import time, subprocess, os, shutil
 
 import credentials
 
@@ -34,12 +34,19 @@ def destroy_nodes():
 
 def destroy_worker_nodes():
     conn = EC2Connection(credentials.EC2_ACCESS_ID, credentials.EC2_SECRET_KEY)
-    for reservation in conn.get_all_instances():
-        for instance in reservation.instances:
-            print('looking at an instance with image id :' + instance.image_id + ' with state ' + instance.state)
-            if instance.image_id == credentials.WORKER_AMI and instance.state == 'running':
-                print('\tdeleting!')
-                instance.terminate()
+    while True:
+        still_destroying = False
+        for reservation in conn.get_all_instances():
+            for instance in reservation.instances:
+                print('looking at an instance with image id :' + instance.image_id + ' with state ' + instance.state)
+                if instance.image_id == credentials.WORKER_AMI and instance.state != 'terminated':
+                    still_destroying = True
+                if instance.image_id == credentials.WORKER_AMI and instance.state == 'running':
+                    print('\tdeleting!')
+                    instance.terminate()
+        if still_destroying == False:
+            return 'done'
+        time.sleep(1)
 
 
 def get_node(conn, id):
@@ -56,16 +63,16 @@ def create_node(conn, my_size):
     while instance.state != 'running':
         time.sleep(1)
         instance.update()
-    #    print("instance state : " + instance.state)
+        print("instance state : " + instance.state)
     return instance
 
-def run_command_on_ip(command, ip):
+def run_command_on_instance(command, dns):
     ssh_args = [
     'ssh',
     '-o', 'UserKnownHostsFile=/dev/null',
     '-o','StrictHostKeyChecking=no',
     '-i', KEY_FILE_PATH,
-    'ubuntu@' + ip,
+    'ubuntu@' + dns,
     command
     ]
     # print(' '.join(ssh_args))
@@ -73,27 +80,27 @@ def run_command_on_ip(command, ip):
     result = proc.communicate()
     return result
 
-def copy_file_to_ip(path, ip, destination):
+def copy_file_to_instance(path, dns, destination):
     ssh_args = [
     'scp',
     '-o', 'UserKnownHostsFile=/dev/null',
     '-o','StrictHostKeyChecking=no',
     '-i',KEY_FILE_PATH,
     path,
-    'ubuntu@' + ip + ':~/' + destination,
+    'ubuntu@' + dns + ':~/' + destination,
     ]
     #print(' '.join(ssh_args))
     proc = subprocess.Popen(ssh_args, stdout=subprocess.PIPE)
     result = proc.communicate()
     return result
 
-def copy_file_from_ip(path, ip, destination):
+def copy_file_from_instance(path, dns, destination):
     ssh_args = [
     'scp',
     '-o', 'UserKnownHostsFile=/dev/null',
     '-o','StrictHostKeyChecking=no',
     '-i',KEY_FILE_PATH,
-    'ubuntu@' + ip + ':~/' + path,
+    'ubuntu@' + dns + ':~/' + path,
     destination,
     ]
     # print(' '.join(ssh_args))
@@ -106,17 +113,18 @@ class MyThread(Thread):
         print(Fore.GREEN + self.name + ' : running' + Fore.RESET)
         conn = EC2Connection(credentials.EC2_ACCESS_ID, credentials.EC2_SECRET_KEY)
         node_name = 'worker_' + self.name
-        self.start_time = time.time()
         instance = create_node(conn, node_name)
         instance.add_tag('job', JOB)
 
         print('instance domain name is ' + instance.public_dns_name)
         time.sleep(30)
-        print(self.name + ':' + str(run_command_on_ip('uname -a', instance.public_dns_name)))
-        print(self.name + ':' + str(copy_file_to_ip(self.input_file_name, instance.public_dns_name, 'input.dna')))
-        print(self.name + ':' + str(run_command_on_ip('cp /home/ubuntu/iprscan/interproscan-5-RC1/interproscan.properties.' + str(self.processors) +  ' /home/ubuntu/iprscan/interproscan-5-RC1/interproscan.properties', instance.public_dns_name)))
-        print(self.name + ':' + str(run_command_on_ip('/home/ubuntu/iprscan/interproscan-5-RC1/interproscan.sh -appl ProDom-2006.1,PfamA-26.0,TIGRFAM-10.1,SMART-6.2,Gene3d-3.3.0,Coils-2.2,Phobius-1.01 -i /home/ubuntu/input.dna -t n', instance.public_dns_name)))
-        print(self.name + ':' + str(copy_file_from_ip('input.dna.gff3', instance.public_dns_name, self.input_file_name + '.out')))
+        self.start_time = time.time()
+        print(self.name + ':' + str(run_command_on_instance('uname -a', instance.public_dns_name)))
+        print(self.name + ':' + str(copy_file_to_instance(self.input_file_name, instance.public_dns_name, 'input.dna')))
+        print(self.name + ':' + str(run_command_on_instance('cp /home/ubuntu/iprscan/interproscan-5-RC1/interproscan.properties.' + str(self.processors) +  ' /home/ubuntu/iprscan/interproscan-5-RC1/interproscan.properties', instance.public_dns_name)))
+        #print(self.name + ':' + str(run_command_on_instance('/home/ubuntu/iprscan/interproscan-5-RC1/interproscan.sh -appl ProDom-2006.1,PfamA-26.0,TIGRFAM-10.1,SMART-6.2,Gene3d-3.3.0,Coils-2.2,Phobius-1.01 -i /home/ubuntu/input.dna -t n', instance.public_dns_name)))
+        print(self.name + ':' + str(run_command_on_instance('/home/ubuntu/iprscan/interproscan-5-RC1/interproscan.sh -appl PfamA-26.0,Coils-2.2,Phobius-1.01 -i /home/ubuntu/input.dna -t n', instance.public_dns_name)))
+        print(self.name + ':' + str(copy_file_from_instance('input.dna.gff3', instance.public_dns_name, self.input_file_name + '.out')))
         print(self.name + ' : destroying node')
         instance.terminate()
         seconds = time.time() - self.start_time
@@ -158,12 +166,12 @@ def split_fasta(filename, number):
 
 
 
-SIZE = 'c1.xlarge'
+SIZE = 'm1.xlarge'
 SECURITY_GROUP = 'quick-start-1'
 JOB = 'lab_meeting_demo'
-number = 4
-processors = 8
-input_file = 'input.fasta'
+number = 8
+processors = 4
+input_file = '500_seqs.fasta'
 KEY_FILE_PATH = 'first_instance.pem'
 KEY_NAME = 'first_instance'
 
@@ -173,6 +181,12 @@ print('destroying old nodes...')
 destroy_worker_nodes()
 print('done destroying old nodes')
 
+#make a new temp directory, copy the input file into it, and chdir into it
+temp_dir_name =str(int(time.time()))
+os.mkdir(temp_dir_name)
+shutil.copy(input_file, temp_dir_name)
+shutil.copy(KEY_FILE_PATH, temp_dir_name)
+os.chdir(temp_dir_name)
 filenames = split_fasta(input_file, number)
 
 for i in range(number):
