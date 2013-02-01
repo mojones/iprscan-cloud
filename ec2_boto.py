@@ -12,58 +12,42 @@ from colorama import Fore, Back, Style
 init()
 
 
-def print_status(conn):
-    nodes = conn.list_nodes()
-
-    for status in ['stopped', 'running', 'pending', 'build']:
-        selected_nodes = [i for i in nodes if i.extra['status'] == status]
-        if len(selected_nodes) > 0:
-            print(str(len(selected_nodes)) + ' ' + status + ' nodes:')
-            for node in selected_nodes:
-                print("\t" + str(node.extra['instanceId']))
-                # print("\t" + str(node.name))
 
 
-def get_live_nodes(conn):
-    return [n for n in conn.list_nodes() if n.state == NodeState.RUNNING]
-
-def destroy_nodes():
-    for node in [n for n in conn.list_nodes() if n.state == NodeState.RUNNING]:
-        print('destroying node ' + node.uuid)
-        node.destroy()
 
 def destroy_worker_nodes():
     conn = EC2Connection(credentials.EC2_ACCESS_ID, credentials.EC2_SECRET_KEY)
     while True:
-        still_destroying = False
+        instances_waiting =0
         for reservation in conn.get_all_instances():
             for instance in reservation.instances:
-                print('looking at an instance with image id :' + instance.image_id + ' with state ' + instance.state)
+                #print('looking at an instance with image id :' + instance.image_id + ' with state ' + instance.state)
                 if instance.image_id == credentials.WORKER_AMI and instance.state != 'terminated':
-                    still_destroying = True
+                    instances_waiting += 1
                 if instance.image_id == credentials.WORKER_AMI and instance.state == 'running':
-                    print('\tdeleting!')
+                    #print('\tdeleting!')
                     instance.terminate()
-        if still_destroying == False:
+        if instances_waiting == 0:
             return 'done'
+        else:
+            print("waiting for " + str(instances_waiting) + " old instance to terminate")
         time.sleep(1)
 
 
-def get_node(conn, id):
-    nodes = [i for i in conn.list_nodes() if i.uuid == id]
-    if len(nodes) > 0:
-        return nodes[0]
-    else:
-        return None
 
 def create_node(conn, my_size):
     print('creating node...')
     reservation = conn.run_instances(credentials.WORKER_AMI,key_name=KEY_NAME,instance_type=SIZE,security_groups=[SECURITY_GROUP])
     instance = reservation.instances[0]
+    # first wait for the instance to start running
     while instance.state != 'running':
-        time.sleep(1)
+        time.sleep(5)
         instance.update()
         print("instance state : " + instance.state)
+    # next wait for the instance to start responding to ssh connections
+    while run_command_on_instance('uname -a', instance.public_dns_name)[0] == '':
+        print('still waiting for ssh to come up', run_command_on_instance('uname -a', instance.public_dns_name))
+        time.sleep(5)
     return instance
 
 def run_command_on_instance(command, dns):
@@ -117,16 +101,15 @@ class MyThread(Thread):
         instance.add_tag('job', JOB)
 
         print('instance domain name is ' + instance.public_dns_name)
-        time.sleep(30)
+        #time.sleep(30)
         self.start_time = time.time()
-        print(self.name + ':' + str(run_command_on_instance('uname -a', instance.public_dns_name)))
         print(self.name + ':' + str(copy_file_to_instance(self.input_file_name, instance.public_dns_name, 'input.dna')))
         print(self.name + ':' + str(run_command_on_instance('cp /home/ubuntu/iprscan/interproscan-5-RC1/interproscan.properties.' + str(self.processors) +  ' /home/ubuntu/iprscan/interproscan-5-RC1/interproscan.properties', instance.public_dns_name)))
         #print(self.name + ':' + str(run_command_on_instance('/home/ubuntu/iprscan/interproscan-5-RC1/interproscan.sh -appl ProDom-2006.1,PfamA-26.0,TIGRFAM-10.1,SMART-6.2,Gene3d-3.3.0,Coils-2.2,Phobius-1.01 -i /home/ubuntu/input.dna -t n', instance.public_dns_name)))
         print(self.name + ':' + str(run_command_on_instance('/home/ubuntu/iprscan/interproscan-5-RC1/interproscan.sh -appl PfamA-26.0,Coils-2.2,Phobius-1.01 -i /home/ubuntu/input.dna -t n', instance.public_dns_name)))
         print(self.name + ':' + str(copy_file_from_instance('input.dna.gff3', instance.public_dns_name, self.input_file_name + '.out')))
         print(self.name + ' : destroying node')
-        instance.terminate()
+    #    instance.terminate()
         seconds = time.time() - self.start_time
         print(Fore.MAGENTA + self.name + ' : completed in ' + str(int(seconds)) + Fore.RESET)
 
@@ -166,11 +149,11 @@ def split_fasta(filename, number):
 
 
 
-SIZE = 'm1.xlarge'
+SIZE = 'm1.medium'
 SECURITY_GROUP = 'quick-start-1'
 JOB = 'lab_meeting_demo'
 number = 8
-processors = 4
+processors = 1
 input_file = '500_seqs.fasta'
 KEY_FILE_PATH = 'first_instance.pem'
 KEY_NAME = 'first_instance'
